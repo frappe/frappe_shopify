@@ -15,7 +15,31 @@ shopify_variants_attr_list = ["option1", "option2", "option3"]
 
 class ShopifyError(Exception):pass
 
-class ShopifySettings(Document): pass
+class ShopifySettings(Document):
+	def validate(self):
+		if self.enable_shopify == 1:
+			self.validate_access_credentials()
+			self.validate_access()
+			
+	def validate_access_credentials(self):		
+		if self.app_type == "Private":
+			if not (self.password and self.api_key and self.shopify_url):
+				frappe.msgprint(_("Missing value for Passowrd, API Key or Shopify URL"), raise_exception=1)
+				
+		else:
+			if not (self.access_token and self.shopify_url):
+				frappe.msgprint(_("Access token or Shopify URL missing"), raise_exception=1)
+					
+	def validate_access(self):
+		try:
+			get_request('/admin/products.json', {"api_key": self.api_key, 
+				"password": self.password, "shopify_url": self.shopify_url, 
+				"access_token": self.access_token, "app_type": self.app_type})
+				
+		except Exception:
+			self.set("enable_shopify", 0)
+			frappe.throw(_("""Invalid Shopify app credentails or access token"""))
+			
 	
 @frappe.whitelist()
 def get_series():
@@ -29,19 +53,23 @@ def get_series():
 def sync_shopify():
 	shopify_settings = frappe.get_doc("Shopify Settings", "Shopify Settings")
 	
-	if not frappe.session.user:
-		user = frappe.db.sql("""select parent from tabUserRole 
-			where role = "System Manager" and parent not in ('administrator', "Administrator") limit 1""", as_list=1)[0][0]
-		frappe.set_user(user)
+	if shopify_settings.enable_shopify:	
+		if not frappe.session.user:
+			frappe.set_user("Administrator")
 		
-	if shopify_settings.enable_shopify:
 		try :
 			sync_products(shopify_settings.price_list, shopify_settings.warehouse)
 			sync_customers()
 			sync_orders()
-			
+		
 		except ShopifyError:
-			pass			
+			shopify_settings.erpnext_shopify = 0
+			shopify_settings.save()
+			
+	elif frappe.local.form_dict.cmd == "erpnext_shopify.erpnext_shopify.doctype.shopify_settings.shopify_settings.sync_shopify":
+		frappe.throw(_("""Shopify connector is not enabled. 
+			Click on 'Connect to Shopify' to connect ERPNext and your Shopify store."""))
+							
 def sync_products(price_list, warehouse):
 	sync_shopify_items(warehouse)
 	sync_erp_items(price_list, warehouse)
