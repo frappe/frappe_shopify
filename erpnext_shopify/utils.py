@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import get_request_session
+from frappe.utils import get_request_session, cstr
 from frappe.exceptions import AuthenticationError, ValidationError
 from functools import wraps
 from frappe import _
@@ -165,11 +165,17 @@ def create_webhooks():
 
 		create_webhook(event, settings.webhook_address)
 
-def disable_shopify_sync(item):
+def disable_shopify_sync_for_item(item):
 	"""Disable Item if not exist on shopify"""
+	frappe.db.rollback()
 	item.sync_with_shopify = 0
 	item.save()
 	frappe.db.commit()
 
 def get_shopify_item_image(shopify_id):
 	return get_request("/admin/products/{0}/images.json".format(shopify_id))["images"]
+
+def disable_shopify_sync_on_exception():
+	frappe.db.rollback()
+	frappe.db.set_value("Shopify Settings", None, "enable_shopify", 0)
+	frappe.db.commit()
