@@ -7,9 +7,9 @@ import os
 import json
 import frappe
 import unittest
-from frappe.utils import cint, cstr, flt
+from frappe.utils import cstr, flt
 from frappe.utils.fixtures import sync_fixtures
-from erpnext_shopify.sync_orders import create_order, valid_customer_and_product
+from erpnext_shopify.sync_orders import create_order
 from erpnext_shopify.sync_products import make_item
 from erpnext_shopify.sync_customers import create_customer
 

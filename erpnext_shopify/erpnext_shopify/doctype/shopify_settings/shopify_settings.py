@@ -15,6 +15,7 @@ class ShopifySettings(Document):
 		if self.enable_shopify == 1:
 			self.validate_access_credentials()
 			self.validate_access()
+			self.create_webhooks()
 
 	def validate_access_credentials(self):
 		if self.app_type == "Private":
@@ -38,6 +39,11 @@ class ShopifySettings(Document):
 			frappe.db.commit()
 			
 			frappe.throw(_("""Invalid Shopify app credentials or access token"""), ShopifySetupError)
+	
+	def create_webhooks(self):
+		from frappe.tasks import scheduler_task
+		scheduler_task.delay(site=frappe.local.site, event="hourly", 
+			handler="erpnext_shopify.webhooks.create_webhooks")
 
 
 @frappe.whitelist()

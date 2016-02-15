@@ -78,6 +78,10 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
+	"all": [
+		"erpnext_shopify.webhooks.create_webhooks",
+		"erpnext_shopify.shopify_webhooks_handler.call_shopify_webhooks_event_handler"
+	],
 	"hourly": [
 		"erpnext_shopify.api.sync_shopify"
 	]

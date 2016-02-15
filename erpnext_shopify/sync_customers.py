@@ -1,4 +1,5 @@
 import frappe
+import json
 from frappe import _
 from .exceptions import ShopifyError
 from .shopify_requests import get_shopify_customers, post_request, put_request
@@ -153,3 +154,18 @@ def get_customer_addresses(customer, last_sync_cond=None):
 		where {0}""".format(' and '.join(conditions)) 
 			
 	return frappe.db.sql(address_query, as_dict=1)
+	
+def disable_customer(webhook_request):
+	data = json.loads(webhook_request.request_data)
+	
+	name = frappe.db.get_value("Customer", {"shopify_customer_id": data.get("id")})
+	
+	if name:
+		customer = frappe.get_doc("Customer", name)
+		customer.sync_with_shopify = 0
+		customer.disabled = 1
+		customer.save()
+	
+	frappe.db.set_value("Webhook Request Handler", webhook_request.name, "status", "Completed")
+	frappe.db.commit()
+	

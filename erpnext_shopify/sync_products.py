@@ -3,14 +3,14 @@ import frappe
 import base64
 import datetime
 import requests
+import json
 from frappe import _
 from erpnext.stock.utils import get_bin
 import requests.exceptions
 from .exceptions import ShopifyError
-from frappe.utils import cstr, flt, nowdate, cint, get_files_path
-from .utils import disable_shopify_sync_for_item, disable_shopify_sync_on_exception, create_log_entry
-from .shopify_requests import (get_request, post_request, get_shopify_items, put_request, 
-	get_shopify_item_image)
+from frappe.utils import cstr, flt, cint, get_files_path
+from .utils import create_log_entry
+from .shopify_requests import post_request, get_shopify_items, put_request, get_shopify_item_image
 
 shopify_variants_attr_list = ["option1", "option2", "option3"]
 
@@ -21,8 +21,12 @@ def sync_products(price_list, warehouse):
 
 def sync_shopify_items(warehouse, shopify_item_list):
 	for shopify_item in get_shopify_items():
-		make_item(warehouse, shopify_item, shopify_item_list)
-		
+		try:
+			make_item(warehouse, shopify_item, shopify_item_list)
+		except ShopifyError, e:
+			 create_log_entry(shopify_item, e)
+			 raise e
+			
 def make_item(warehouse, shopify_item, shopify_item_list):
 	add_item_weight(shopify_item)
 	if has_variants(shopify_item):
@@ -321,9 +325,13 @@ def sync_erpnext_items(price_list, warehouse, shopify_item_list):
 		and (disabled is null or disabled = 0) %s """ % last_sync_condition
 	
 	for item in frappe.db.sql(item_query, as_dict=1):
-		if item.shopify_product_id not in shopify_item_list:
-			sync_item_with_shopify(item, price_list, warehouse)
-
+		if item.name not in shopify_item_list:
+			try:
+				sync_item_with_shopify(item, price_list, warehouse)
+			except ShopifyError, e:
+				create_log_entry(item, e)
+				raise e
+				
 def sync_item_with_shopify(item, price_list, warehouse):
 	variant_item_name_list = []
 
@@ -561,3 +569,17 @@ def get_product_update_dict_and_resource(shopify_product_id, shopify_variant_id)
 
 	resource = "admin/products/{}.json".format(shopify_product_id)
 	return item_data, resource
+
+def disable_item(webhook_request):
+	data = json.loads(webhook_request.request_data)
+	
+	name = frappe.db.get_value("Item", {"shopify_product_id": data.get("id")})
+	
+	if name:
+		item = frappe.get_doc("Item", name)
+		item.sync_with_shopify = 0
+		item.disabled = 1
+		item.save()
+	
+	frappe.db.set_value("Webhook Request Handler", webhook_request.name, "status", "Completed")
+	frappe.db.commit()
