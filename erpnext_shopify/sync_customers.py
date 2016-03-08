@@ -2,6 +2,7 @@ from __future__ import unicode_literals
 import frappe
 from frappe import _
 import requests.exceptions
+from .utils import create_log_entry
 from .shopify_requests import get_shopify_customers, post_request, put_request
 
 def sync_customers():
@@ -19,7 +20,7 @@ def create_customer(shopify_customer, shopify_customer_list):
 	
 	cust_name = (shopify_customer.get("first_name") + " " + (shopify_customer.get("last_name") \
 		and  shopify_customer.get("last_name") or "")) if shopify_customer.get("first_name")\
-		 else shopify_customer.get("email")
+		else shopify_customer.get("email")
 	
 	try:
 		customer = frappe.get_doc({
@@ -32,18 +33,19 @@ def create_customer(shopify_customer, shopify_customer_list):
 			"territory": _("All Territories"),
 			"customer_type": _("Individual")
 		}).insert()
-	except Exception, e:
-		raise e
-
-	if customer:
-		create_customer_address(customer, shopify_customer)
+		
+		if customer:
+			create_customer_address(customer, shopify_customer)
 	
-	shopify_customer_list.append(shopify_customer.get("id"))
-	frappe.db.commit()
+		shopify_customer_list.append(shopify_customer.get("id"))
+		frappe.db.commit()
+		
+	except Exception, e:
+		create_log_entry(e.message, shopify_customer, frappe.get_traceback())
 	
 def create_customer_address(customer, shopify_customer):
-	for i, address in enumerate(shopify_customer.get("addresses")):		
-		address_title, address_type = get_address_title_and_type(customer.customer_name, i)	
+	for i, address in enumerate(shopify_customer.get("addresses")):
+		address_title, address_type = get_address_title_and_type(customer.customer_name, i)
 		
 		frappe.get_doc({
 			"doctype": "Address",
@@ -84,14 +86,17 @@ def sync_erpnext_customers(shopify_customer_list):
 		where {0}""".format(" and ".join(condition))
 		
 	for customer in frappe.db.sql(customer_query, as_dict=1):
-		if not customer.shopify_customer_id:
-			create_customer_to_shopify(customer)
+		try :
+			if not customer.shopify_customer_id:
+				create_customer_to_shopify(customer)
 			
-		else:
-			if customer.shopify_customer_id not in shopify_customer_list:
-				update_customer_to_shopify(customer, last_sync_condition)
-		
-		frappe.db.commit()
+			else:
+				if customer.shopify_customer_id not in shopify_customer_list:
+					update_customer_to_shopify(customer, last_sync_condition)
+			frappe.db.commit()
+			
+		except Exception, e:
+			create_log_entry(e.message, customer, frappe.get_traceback())
 
 def create_customer_to_shopify(customer):
 	shopify_customer = {
@@ -135,14 +140,14 @@ def update_customer_to_shopify(customer, last_sync_condition):
 			customer.sync_with_shopify = 0
 			customer.save()
 		else:
-			raise
+			create_log_entry(e.message, customer, frappe.get_traceback())
 			
 def update_address_details(customer, last_sync_condition):
 	customer_addresses = get_customer_addresses(customer, last_sync_condition)
 	for address in customer_addresses:
-		if address.shopify_address_id:			
+		if address.shopify_address_id:
 			url = "/admin/customers/{0}/addresses/{1}.json".format(customer.shopify_customer_id,\
-			 address.shopify_address_id)
+			address.shopify_address_id)
 			
 			address["id"] = address["shopify_address_id"]
 			

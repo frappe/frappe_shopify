@@ -5,7 +5,7 @@ from .exceptions import ShopifyError
 from .utils import create_log_entry
 from .sync_products import make_item
 from .sync_customers import create_customer
-from frappe.utils import cstr, flt, nowdate
+from frappe.utils import flt, nowdate
 from .shopify_requests import get_request, get_shopify_orders
 from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note, make_sales_invoice
 
@@ -15,8 +15,15 @@ def sync_orders():
 def sync_shopify_orders():
 	for shopify_order in get_shopify_orders():
 		if valid_customer_and_product(shopify_order):
-			create_order(shopify_order)
-
+			try:
+				create_order(shopify_order)
+			
+			except ShopifyError, e:
+				create_log_entry(e.message, shopify_order, frappe.get_traceback())
+				
+			except Exception, e:
+				create_log_entry(e.message, shopify_order, frappe.get_traceback())
+				
 def valid_customer_and_product(shopify_order):
 	customer_id = shopify_order.get("customer", {}).get("id")
 	if customer_id:
@@ -101,13 +108,6 @@ def create_delivery_note(shopify_order, shopify_settings, so):
 def get_fulfillment_items(dn_items, fulfillment_items, shopify_settings):
 	return [dn_item.update({"qty": item.get("quantity")}) for item in fulfillment_items for dn_item in dn_items\
 			 if get_item_code(item) == dn_item.item_code]
-			 
-	# items = []
-# 	for shopify_item in fulfillment_items:
-# 		for item in dn_items:
-# 			if get_item_code(shopify_item) == item.item_code:
-# 				items.append(item.update({"qty": item.get("quantity")}))
-# 	return items
 	
 def get_discounted_amount(order):
 	discounted_amount = 0.0

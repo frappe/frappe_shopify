@@ -5,21 +5,32 @@ import datetime
 import requests
 from frappe import _
 import requests.exceptions
+from .exceptions import ShopifyError
 from erpnext.stock.utils import get_bin
 from frappe.utils import cstr, flt, cint, get_files_path
+from .utils import create_log_entry
 from .shopify_requests import post_request, get_shopify_items, put_request, get_shopify_item_image
 
 shopify_variants_attr_list = ["option1", "option2", "option3"]
 
 def sync_products(price_list, warehouse):
-	shopify_item_list = [] 
+	shopify_item_list = []
 	sync_shopify_items(warehouse, shopify_item_list)
 	sync_erpnext_items(price_list, warehouse, shopify_item_list)
 
 def sync_shopify_items(warehouse, shopify_item_list):
 	for shopify_item in get_shopify_items():
-		make_item(warehouse, shopify_item, shopify_item_list)
-		
+		try:
+			make_item(warehouse, shopify_item, shopify_item_list)
+		except ShopifyError, e:
+			create_log_entry(e.message, shopify_item, frappe.get_traceback())
+			
+		except Exception, e:
+			if e.args[0] and e.args[0].startswith("402"):
+				raise e
+			else:
+				create_log_entry(e.message, shopify_item, frappe.get_traceback())
+				
 def make_item(warehouse, shopify_item, shopify_item_list):
 	add_item_weight(shopify_item)
 	if has_variants(shopify_item):
@@ -50,12 +61,12 @@ def create_attribute(shopify_item):
 				"attribute_name": attr.get("name"),
 				"item_attribute_values": [
 					{
-						"attribute_value": attr_value, 
+						"attribute_value": attr_value,
 						"abbr":attr_value
-					} 
+					}
 					for attr_value in attr.get("values")
 				]
-			}).insert()			
+			}).insert()
 			attribute.append({"attribute": attr.get("name")})
 
 		else:
@@ -68,7 +79,7 @@ def create_attribute(shopify_item):
 				
 			else:
 				attribute.append({
-					"attribute": attr.get("name"), 
+					"attribute": attr.get("name"),
 					"from_range": item_attr.get("from_range"),
 					"to_range": item_attr.get("to_range"),
 					"increment": item_attr.get("increment"),
@@ -243,9 +254,9 @@ def is_item_exists(shopify_item, attributes=None, shopify_item_list=[]):
 	
 	if name:
 
-		item = frappe.get_doc("Item", name)		
+		item = frappe.get_doc("Item", name)
 		
-		if not item.shopify_product_id:			
+		if not item.shopify_product_id:
 			item.shopify_product_id = shopify_item.get("shopify_product_id")
 			item.shopify_variant_id = shopify_item.get("shopify_variant_id")
 			item.save()
@@ -275,7 +286,7 @@ def is_item_exists(shopify_item, attributes=None, shopify_item_list=[]):
 				variant.shopify_product_id = shopify_item.get("shopify_product_id")
 				variant.shopify_variant_id = shopify_item.get("shopify_variant_id")
 				variant.save()
-				 
+			
 			return False
 		
 		return True
@@ -310,7 +321,10 @@ def sync_erpnext_items(price_list, warehouse, shopify_item_list):
 	
 	for item in frappe.db.sql(item_query, as_dict=1):
 		if item.shopify_product_id not in shopify_item_list:
-			sync_item_with_shopify(item, price_list, warehouse)
+			try:
+				sync_item_with_shopify(item, price_list, warehouse)
+			except ShopifyError, e:
+				create_log_entry(e.message, item, frappe.get_traceback())
 
 def sync_item_with_shopify(item, price_list, warehouse):
 	variant_item_name_list = []
@@ -361,7 +375,7 @@ def sync_item_with_shopify(item, price_list, warehouse):
 				erp_item.sync_with_shopify = 0
 				erp_item.save()
 			else:
-				raise
+				create_log_entry(e.message, item_data, frappe.get_traceback())
 
 	sync_item_image(erp_item)
 	frappe.db.commit()
@@ -394,7 +408,6 @@ def sync_item_image(item):
 			if not item_image_exists(item.shopify_product_id, image_info):
 				# to avoid image duplication
 				post_request("/admin/products/{0}/images.json".format(item.shopify_product_id), image_info)
-		
 
 def validate_image_url(url):
 	""" check on given url image exists or not"""
