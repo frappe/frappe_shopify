@@ -196,13 +196,19 @@ def get_sku(item):
 
 def add_to_price_list(item, name):
 	item_price_name = frappe.db.get_value("Item Price", {"item_code": name}, "name")
+	price_list = frappe.get_doc("Shopify Settings", "Shopify Settings").price_list
+	
+	if not price_list and not item_price_name:
+		return
+	
 	if not item_price_name:
 		frappe.get_doc({
 			"doctype": "Item Price",
-			"price_list": frappe.get_doc("Shopify Settings", "Shopify Settings").price_list,
+			"price_list": price_list,
 			"item_code": name,
 			"price_list_rate": item.get("item_price") or item.get("variants")[0].get("price")
 		}).insert()
+
 	else:
 		item_rate = frappe.get_doc("Item Price", item_price_name)
 		item_rate.price_list_rate = item.get("item_price") or item.get("variants")[0].get("price")
