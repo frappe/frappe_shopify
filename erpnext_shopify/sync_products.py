@@ -21,7 +21,6 @@ def sync_shopify_items(warehouse, shopify_item_list):
 	for shopify_item in get_shopify_items():
 		try:
 			make_item(warehouse, shopify_item, shopify_item_list)
-
 		except ShopifyError, e:
 			make_shopify_log(title=e.message, status="Error", method="sync_shopify_items", message=frappe.get_traceback(),
 				request_data=shopify_item, exception=True)
@@ -124,22 +123,27 @@ def create_item(shopify_item, warehouse, has_variant=0, attributes=None,variant_
 	}
 	item_dict["web_long_description"] = item_dict["shopify_description"]
 
-	if not is_item_exists(item_dict, attributes, shopify_item_list=shopify_item_list):
+	name = None
+	if not item_exists(item_dict, attributes, shopify_item_list=shopify_item_list):
 		item_details = get_item_details(shopify_item)
 
 		if not item_details:
 			new_item = frappe.get_doc(item_dict)
 			new_item.insert()
 			name = new_item.name
-
 		else:
+			update_item(item_details, item_dict)
+
+	else:
+		item_details = get_item_details(shopify_item)
+		if item_details:
 			update_item(item_details, item_dict)
 			name = item_details.name
 
-		if not has_variant:
-			add_to_price_list(shopify_item, name)
+	if not has_variant and name:
+		add_to_price_list(shopify_item, name)
 
-		frappe.db.commit()
+	frappe.db.commit()
 
 def create_item_variants(shopify_item, warehouse, attributes, shopify_variants_attr_list, shopify_item_list):
 	template_item = frappe.db.get_value("Item", filters={"shopify_product_id": shopify_item.get("id")},
@@ -196,13 +200,19 @@ def get_sku(item):
 
 def add_to_price_list(item, name):
 	item_price_name = frappe.db.get_value("Item Price", {"item_code": name}, "name")
+	price_list = frappe.get_doc("Shopify Settings", "Shopify Settings").price_list
+	
+	if not price_list and not item_price_name:
+		return
+	
 	if not item_price_name:
 		frappe.get_doc({
 			"doctype": "Item Price",
-			"price_list": frappe.get_doc("Shopify Settings", "Shopify Settings").price_list,
+			"price_list": price_list,
 			"item_code": name,
 			"price_list_rate": item.get("item_price") or item.get("variants")[0].get("price")
 		}).insert()
+
 	else:
 		item_rate = frappe.get_doc("Item Price", item_price_name)
 		item_rate.price_list_rate = item.get("item_price") or item.get("variants")[0].get("price")
@@ -256,15 +266,14 @@ def get_item_details(shopify_item):
 			["name", "stock_uom", "item_name"], as_dict=1)
 		return item_details
 
-def is_item_exists(shopify_item, attributes=None, shopify_item_list=[]):
+def item_exists(shopify_item, attributes=None, shopify_item_list=[]):
 	name = frappe.db.get_value("Item", {"item_name": shopify_item.get("item_name")})
 	shopify_item_list.append(cstr(shopify_item.get("shopify_product_id")))
 
 	if name:
-
 		item = frappe.get_doc("Item", name)
 		item.flags.ignore_mandatory=True
-		
+
 		if not item.shopify_product_id:
 			item.shopify_product_id = shopify_item.get("shopify_product_id")
 			item.shopify_variant_id = shopify_item.get("shopify_variant_id")
@@ -320,6 +329,16 @@ def update_item(item_details, item_dict):
 	item.flags.ignore_mandatory = True
 	item.save()
 
+def get_erpnext_items_to_sync(last_sync_condition=None):
+	if not last_sync_condition:
+		last_sync_condition = ""
+
+	return frappe.db.sql( """select name, item_code, item_name, item_group,
+		description, shopify_description, has_variants, stock_uom, image, shopify_product_id, 
+		shopify_variant_id, sync_qty_with_shopify, net_weight, weight_uom, default_supplier from tabItem
+		where sync_with_shopify=1 and (variant_of is null or variant_of = '')
+		and (disabled is null or disabled = 0) %s """ % last_sync_condition, as_dict=1)
+
 def sync_erpnext_items(price_list, warehouse, shopify_item_list):
 	shopify_settings = frappe.get_doc("Shopify Settings", "Shopify Settings")
 
@@ -327,13 +346,7 @@ def sync_erpnext_items(price_list, warehouse, shopify_item_list):
 	if shopify_settings.last_sync_datetime:
 		last_sync_condition = "and modified >= '{0}' ".format(shopify_settings.last_sync_datetime)
 
-	item_query = """select name, item_code, item_name, item_group,
-		description, shopify_description, has_variants, stock_uom, image, shopify_product_id, 
-		shopify_variant_id, sync_qty_with_shopify, net_weight, weight_uom, default_supplier from tabItem
-		where sync_with_shopify=1 and (variant_of is null or variant_of = '')
-		and (disabled is null or disabled = 0) %s """ % last_sync_condition
-
-	for item in frappe.db.sql(item_query, as_dict=1):
+	for item in get_erpnext_items_to_sync(last_sync_condition):
 		if item.shopify_product_id not in shopify_item_list:
 			try:
 				sync_item_with_shopify(item, price_list, warehouse)
@@ -374,7 +387,7 @@ def sync_item_with_shopify(item, price_list, warehouse):
 
 	erp_item = frappe.get_doc("Item", item.get("name"))
 	erp_item.flags.ignore_mandatory = True
-	
+
 	if not item.get("shopify_product_id"):
 		new_item = post_request("/admin/products.json", item_data)
 		erp_item.shopify_product_id = new_item['product'].get("id")
@@ -456,28 +469,31 @@ def update_variant_item(new_item, item_code_list):
 		erp_item.shopify_variant_id = new_item['product']["variants"][i].get("id")
 		erp_item.save()
 
-def get_variant_attributes(item, price_list, warehouse):
-	options, variant_list, variant_item_name = [], [], []
+def get_variant_attributes(item, price_list, warehouse, include_varaint_id=True):
+	options, variant_list, variant_item_name, attr_seq = [], [], [], []
 	attr_dict = {}
 
 	for i, variant in enumerate(frappe.get_all("Item", filters={"variant_of": item.get("name")},
 		fields=['name'])):
 
 		item_variant = frappe.get_doc("Item", variant.get("name"))
-		variant_list.append(get_price_and_stock_details(item_variant, warehouse, price_list))
+		variant_list.append(get_price_and_stock_details(item_variant, warehouse, price_list, include_varaint_id))
 
 		for attr in item_variant.get('attributes'):
+			if attr.attribute not in attr_seq:
+				attr_seq.append(attr.attribute)
+
 			if not attr_dict.get(attr.attribute):
 				attr_dict.setdefault(attr.attribute, [])
 
 			attr_dict[attr.attribute].append(attr.attribute_value)
 
 			if attr.idx <= 3:
-				variant_list[i]["option"+cstr(attr.idx)] = attr.attribute_value
+				variant_list[i]["option"+cstr(attr.idx)] = attr.attribute_value 
 
 		variant_item_name.append(item_variant.name)
 
-	for i, attr in enumerate(attr_dict):
+	for i, attr in enumerate(attr_seq):
 		options.append({
 			"name": attr,
 			"position": i+1,
@@ -486,7 +502,7 @@ def get_variant_attributes(item, price_list, warehouse):
 
 	return variant_list, options, variant_item_name
 
-def get_price_and_stock_details(item, warehouse, price_list):
+def get_price_and_stock_details(item, warehouse, price_list, include_varaint_id=True):
 	qty = frappe.db.get_value("Bin", {"item_code":item.get("item_code"), "warehouse": warehouse}, "actual_qty")
 	price = frappe.db.get_value("Item Price", \
 			{"price_list": price_list, "item_code":item.get("item_code")}, "price_list_rate")
@@ -510,7 +526,7 @@ def get_price_and_stock_details(item, warehouse, price_list):
 			"inventory_management": "shopify"
 		})
 
-	if item.shopify_variant_id:
+	if include_varaint_id and item.shopify_variant_id:
 		item_price_and_quantity["id"] = item.shopify_variant_id
 
 	return item_price_and_quantity
@@ -527,84 +543,93 @@ def get_weight_in_grams(weight, weight_uom):
 
 def trigger_update_item_stock(doc, method):
 	if doc.flags.via_stock_ledger_entry:
-		shopify_settings = frappe.get_doc("Shopify Settings", "Shopify Settings")
-		if shopify_settings.shopify_url and shopify_settings.enable_shopify:
-			update_item_stock(doc.item_code, shopify_settings, doc)
+		update_item_stock(doc.item_code, doc)
 
 def update_item_stock_qty():
-	shopify_settings = frappe.get_doc("Shopify Settings", "Shopify Settings")
-	for item in frappe.get_all("Item", fields=['name', "item_code"],
-		filters={"sync_with_shopify": 1, "disabled": ("!=", 1)}):
-		try:
-			update_item_stock(item.item_code, shopify_settings)
-		except ShopifyError, e:
-			make_shopify_log(title=e.message, status="Error", method="sync_shopify_items", message=frappe.get_traceback(),
-				request_data=item, exception=True)
+	for item in get_erpnext_items_to_sync():
+		update_item_stock(item.name)
 
-		except Exception, e:
-			if e.args[0] and e.args[0].startswith("402"):
-				raise e
-			else:
-				make_shopify_log(title=e.message, status="Error", method="sync_shopify_items", message=frappe.get_traceback(),
-					request_data=item, exception=True)
+def update_item_stock(item_code, bin_entry=None):
+	shopify_settings = frappe.db.get_value("Shopify Settings", None, ["shopify_url", "enable_shopify",
+		"warehouse", "price_list"], as_dict=1)
 
-def update_item_stock(item_code, shopify_settings, bin=None):
-	item = frappe.get_doc("Item", item_code)
-	if item.sync_qty_with_shopify:
-		if not bin:
-			bin = get_bin(item_code, shopify_settings.warehouse)
+	if not shopify_settings.shopify_url or not cint(shopify_settings.enable_shopify):
+		return
 
-		if not item.shopify_product_id and not item.variant_of:
-			sync_item_with_shopify(item, shopify_settings.price_list, shopify_settings.warehouse)
+	item_details = frappe.db.get_value("Item", item_code, ["name", "shopify_product_id", "shopify_variant_id",
+		"variant_of", "has_variants", "sync_qty_with_shopify", "sync_with_shopify"], as_dict=1)
 
-		if item.sync_with_shopify and item.shopify_product_id and shopify_settings.warehouse == bin.warehouse:
-			if item.variant_of:
-				item_data, resource = get_product_update_dict_and_resource(frappe.get_value("Item",
-					item.variant_of, "shopify_product_id"), item.shopify_variant_id)
-			else:
-				item_data, resource = get_product_update_dict_and_resource(item.shopify_product_id, item.shopify_variant_id)
+	if not item_details.sync_with_shopify or not item_details.sync_qty_with_shopify:
+		return
 
-			item_data["product"]["variants"][0].update({
-				"inventory_quantity": cint(bin.actual_qty),
-				"inventory_management": "shopify"
+	if not item_details.shopify_product_id or not item_details.shopify_variant_id:
+		return
+
+	if not bin_entry:
+		bin_entry = get_bin(item_code, shopify_settings.warehouse)
+
+	item_details.update({
+		"item_code": item_code
+	})
+
+	item_structure, resource = get_product_update_dict_and_resource(item_details)
+
+	for item in item_structure["product"]["variants"]:
+		if item["id"] == item_details.shopify_variant_id:
+			item.update({
+				"inventory_quantity": cint(bin_entry.actual_qty),
 			})
 
-			try:
-				put_request(resource, item_data)
-			except requests.exceptions.HTTPError, e:
-				if e.args[0] and e.args[0].startswith("404"):
-					disable_shopify_sync_for_item(item)
-				else:
-					raise e
+	try:
+		put_request(resource, item_structure)
+	except requests.exceptions.HTTPError, e:
+		if e.args[0] and e.args[0].startswith("404"):
+			disable_shopify_sync_for_item(item)
+		else:
+			make_shopify_log(title="Shopify qty sync faild", status="Error", method="trigger_update_item_stock",
+				message=frappe.get_traceback(), exception=False, request_data=item_structure)
 
-def get_product_update_dict_and_resource(shopify_product_id, shopify_variant_id):
+def get_product_update_dict_and_resource(item_details):
 	"""
-	JSON required to update product
-
-	item_data =	{
-		"product": {
-			"id": 3649706435 (shopify_product_id),
-			"variants": [
-				{
-					"id": 10577917379 (shopify_variant_id),
-					"inventory_management": "shopify",
-					"inventory_quantity": 10
-				}
-			]
+	{
+			"product": {
+				"id": 3649706435 (shopify_product_id),
+				"variants": [
+					{
+						"id": 10577917379 (shopify_variant_id),
+						"inventory_management": "shopify",
+						"inventory_quantity": 10
+					}
+				]
+			}
 		}
-	}
 	"""
-
-	item_data = {
+	item_update_structure = {
 		"product": {
 			"variants": []
 		}
 	}
 
-	item_data["product"]["id"] = shopify_product_id
-	item_data["product"]["variants"].append({
-		"id": shopify_variant_id
-	})
+	resource = "admin/products/{}.json".format(item_details.shopify_product_id)
 
-	resource = "admin/products/{}.json".format(shopify_product_id)
-	return item_data, resource
+	if item_details.has_variants:
+		item_update_structure["product"]["id"] = item_details.shopify_product_id
+		item_update_structure["product"]["variants"].extend(get_variants(item_details.name))
+
+	elif item_details.variant_of:
+		shopify_product_id = frappe.db.get_value("Item", item_details.variant_of, "shopify_product_id")
+		item_update_structure["product"]["id"] = shopify_product_id
+		item_update_structure["product"]["variants"].extend(get_variants(item_details.variant_of))
+		resource = "admin/products/{}.json".format(shopify_product_id)
+
+	else:
+		item_update_structure["product"]["id"] = item_details.shopify_product_id
+		item_update_structure["product"]["variants"].append({"id": item_details.shopify_variant_id})
+
+	return item_update_structure, resource
+
+def get_variants(item_code):
+	return frappe.db.sql("""select shopify_variant_id as id, 'shopify' as inventory_management
+		from `tabItem` where variant_of=%s and
+		(shopify_variant_id in not null or shopify_variant_id != '') and
+		(shopify_product_id in not null or shopify_product_id != '') """, item_code, as_dict=1)

@@ -33,7 +33,7 @@ def is_shopify_enabled():
 	
 	return True
 	
-def make_shopify_log(title="Sync Log", status="Queued", method="sync_shopify", message=None, exception=False, 
+def make_shopify_log(title="Sync Log", status="Queued", method="sync_shopify", message=None, exception=False,
 name=None, request_data={}):
 	if not name:
 		name = frappe.db.get_value("Shopify Log", {"status": "Queued"})

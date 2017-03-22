@@ -35,7 +35,7 @@ def sync_shopify_resources():
 			update_item_stock_qty()
 			frappe.db.set_value("Shopify Settings", None, "last_sync_datetime", now_time)
 			
-			make_shopify_log(title="Sync Completed", status="Success", method=frappe.local.form_dict.cmd, 
+			make_shopify_log(title="Sync Completed", status="Success", method=frappe.local.form_dict.cmd,
 				message= "Updated {customers} customer(s), {products} item(s), {orders} order(s)".format(**frappe.local.form_dict.count_dict))
 
 		except Exception, e:
