@@ -150,7 +150,7 @@ def create_item_variants(shopify_item, warehouse, attributes, shopify_variants_a
 			shopify_item_variant = {
 				"id" : variant.get("id"),
 				"item_code": variant.get("id"),
-				"title": variant.get("title"),
+				"title": shopify_item.get("title") + ": " + variant.get("title"),
 				"product_type": shopify_item.get("product_type"),
 				"sku": variant.get("sku"),
 				"uom": template_item.stock_uom or _("Nos"),
