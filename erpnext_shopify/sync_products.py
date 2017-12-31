@@ -156,7 +156,8 @@ def create_item_variants(shopify_item, warehouse, attributes, shopify_variants_a
 				"item_price": variant.get("price"),
 				"variant_id": variant.get("id"),
 				"weight_unit": variant.get("weight_unit"),
-				"weight": variant.get("weight")
+				"weight": variant.get("weight"),
+				"variant_image": get_variant_image(shopify_item, variant)
 			}
 
 			for i, variant_attr in enumerate(shopify_variants_attr_list):
@@ -216,7 +217,16 @@ def add_to_price_list(item, name):
 
 def get_item_image(shopify_item):
 	if shopify_item.get("image"):
-		return shopify_item.get("image").get("src")
+		return shopify_item.get("image").get("src")													
+	elif shopify_item.get("variant_image"):													
+		return shopify_item.get("variant_image")														
+	return None
+
+def get_variant_image(shopify_item, variant):
+	if variant.get("image_id"):
+		for image in shopify_item.get("images"):
+			if image.get("id") == variant.get("image_id"):
+				return image.get("src")											
 	return None
 
 def get_supplier(shopify_item):
