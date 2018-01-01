@@ -59,7 +59,7 @@ def create_customer_address(customer, shopify_customer):
 	for i, address in enumerate(shopify_customer.get("addresses")):
 		address_title, address_type = get_address_title_and_type(customer.customer_name, i)
 		try :
-			frappe.get_doc({
+			new_address = frappe.get_doc({
 				"doctype": "Address",
 				"shopify_address_id": address.get("id"),
 				"address_title": address_title,
@@ -77,6 +77,16 @@ def create_customer_address(customer, shopify_customer):
 					"link_name": customer.name
 				}]
 			}).insert(ignore_mandatory=True)
+			
+			# create dynamic link
+			dynamic_link = frappe.get_doc({
+				"doctype": "Dynamic Link",
+				"parent": new_address.name,
+				"parenttype": "Address",
+				"parentfield": "links",
+				"link_doctype": "Customer",
+				"link_name": customer.name
+			}).insert()
 			
 		except Exception, e:
 			make_shopify_log(title=e.message, status="Error", method="create_customer_address", message=frappe.get_traceback(),
