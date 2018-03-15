@@ -84,7 +84,7 @@ def get_filtering_condition():
 		timezone = pytz.timezone(get_time_zone())
 		timezone_abbr = timezone.localize(last_sync_datetime, is_dst=False)
 
-		return 'updated_at_min="{0} {1}"'.format(last_sync_datetime.strftime("%Y-%m-%d %H:%M:%S"), timezone_abbr.tzname())
+		return 'updated_at_max="{0} {1}"'.format(last_sync_datetime.strftime("%Y-%m-%d %H:%M:%S"), timezone_abbr.tzname())
 	return ''
 
 def get_total_pages(resource, ignore_filter_conditions=False):
