@@ -359,7 +359,7 @@ def get_erpnext_items(price_list):
 
 	item_from_master = """select name, item_code, item_name, item_group,
 		description, shopify_description, has_variants, variant_of, stock_uom, image, shopify_product_id, 
-		shopify_variant_id, sync_qty_with_shopify, weight_per_unit, weight_uom, default_supplier from tabItem
+		shopify_variant_id, sync_qty_with_shopify, weight_per_unit, weight_uom from tabItem
 		where sync_with_shopify=1 and (variant_of is null or variant_of = '')
 		and (disabled is null or disabled = 0)  %s """ % last_sync_condition
 
@@ -372,8 +372,7 @@ def get_erpnext_items(price_list):
 
 	item_from_item_price = """select i.name, i.item_code, i.item_name, i.item_group, i.description,
 		i.shopify_description, i.has_variants, i.variant_of, i.stock_uom, i.image, i.shopify_product_id,
-		i.shopify_variant_id, i.sync_qty_with_shopify, i.weight_per_unit, i.weight_uom,
-		i.default_supplier from `tabItem` i, `tabItem Price` ip
+		i.shopify_variant_id, i.sync_qty_with_shopify, i.weight_per_unit, i.weight_uom from `tabItem` i, `tabItem Price` ip
 		where price_list = '%s' and i.name = ip.item_code
 			and sync_with_shopify=1 and (disabled is null or disabled = 0) %s""" %(price_list, item_price_condition)
 
